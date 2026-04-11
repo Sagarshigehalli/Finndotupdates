@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1019222285899",
+    "project_id": "finndotlogin",
+    "storage_bucket": "finndotlogin.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1019222285899:android:414145e7c7098efcecb7ce",
+        "android_client_info": {
+          "package_name": "com.anomapro.finndot.prd"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBw7KmFXVtQGdzgsSdLTHK6e1A8a82E4A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

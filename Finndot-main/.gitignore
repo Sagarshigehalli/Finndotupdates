@@ -1,0 +1,8 @@
+# Project exclude paths
+/.gradle/
+/parser-core/build/
+/parser-core/build/classes/kotlin/main/
+.idea
+.idea/*
+local.properties
+.DS_Store
