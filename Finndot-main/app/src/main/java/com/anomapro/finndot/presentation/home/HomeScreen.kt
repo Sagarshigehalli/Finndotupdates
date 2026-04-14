@@ -97,6 +97,7 @@ fun HomeScreen(
     onNavigateToFilteredTransactions: (category: String?, transactionType: String?, period: String?, currency: String?) -> Unit = { _, _, _, _ -> },
     onNavigateToTransactionsWithSearch: () -> Unit = {},
     onNavigateToSubscriptions: () -> Unit = {},
+    onNavigateToRecurringCommitments: () -> Unit = {},
     onNavigateToAddScreen: () -> Unit = {},
     onNavigateToBudgetSettings: () -> Unit = {},
     onTransactionClick: (Long) -> Unit = {},
@@ -291,6 +292,31 @@ fun HomeScreen(
                     selected = uiState.selectedTimeRange,
                     onSelect = { viewModel.selectTimeRange(it) },
                     modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Recurring & upcoming monthly commitments
+            item {
+                HomeSectionLabel(
+                    title = "Recurring & upcoming monthly commitments",
+                    subtitle = null,
+                    modifier = Modifier.padding(bottom = Spacing.xs)
+                )
+            }
+            item {
+                UpcomingMonthlyCommitmentsCard(
+                    totalPredicted = uiState.recurringBillsPredictedTotalThisMonth,
+                    expectedCount = uiState.recurringBillsExpectedCountThisMonth,
+                    nextMerchant = uiState.recurringBillsNextMerchant,
+                    nextAmount = uiState.recurringBillsNextAmount,
+                    nextDaysUntilDue = uiState.recurringBillsNextDaysUntilDue,
+                    progress = uiState.recurringBillsProgressThisMonth,
+                    currency = uiState.selectedCurrency,
+                    intervalRecurringCount = uiState.intervalRecurringCount,
+                    intervalNextMerchant = uiState.intervalRecurringNextMerchant,
+                    intervalNextAmount = uiState.intervalRecurringNextAmount,
+                    intervalNextDaysUntilDue = uiState.intervalRecurringNextDaysUntilDue,
+                    onClick = onNavigateToRecurringCommitments
                 )
             }
             
@@ -601,6 +627,125 @@ private fun HomeSectionLabel(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+private fun UpcomingMonthlyCommitmentsCard(
+    totalPredicted: BigDecimal,
+    expectedCount: Int,
+    nextMerchant: String?,
+    nextAmount: BigDecimal?,
+    nextDaysUntilDue: Int?,
+    progress: Float,
+    currency: String,
+    intervalRecurringCount: Int,
+    intervalNextMerchant: String?,
+    intervalNextAmount: BigDecimal?,
+    intervalNextDaysUntilDue: Int?,
+    onClick: () -> Unit,
+) {
+    val nextLine = if (nextMerchant != null && nextAmount != null && nextDaysUntilDue != null) {
+        val dayLabel = when {
+            nextDaysUntilDue < 0 -> "${-nextDaysUntilDue} days overdue"
+            nextDaysUntilDue == 0 -> "today"
+            nextDaysUntilDue == 1 -> "in 1 day"
+            else -> "in $nextDaysUntilDue days"
+        }
+        "Next: $nextMerchant ${CurrencyFormatter.formatCurrency(nextAmount, currency)} $dayLabel"
+    } else {
+        "No recurring monthly pattern detected yet"
+    }
+    val subtitle = when {
+        expectedCount == 0 -> "None due this month"
+        expectedCount == 1 -> "1 bill expected this month"
+        else -> "$expectedCount bills expected this month"
+    }
+
+    val intervalNextLine = if (
+        intervalNextMerchant != null &&
+        intervalNextAmount != null &&
+        intervalNextDaysUntilDue != null
+    ) {
+        val dayLabel = when {
+            intervalNextDaysUntilDue < 0 -> "${-intervalNextDaysUntilDue} days overdue"
+            intervalNextDaysUntilDue == 0 -> "today"
+            intervalNextDaysUntilDue == 1 -> "in 1 day"
+            else -> "in $intervalNextDaysUntilDue days"
+        }
+        "Next: $intervalNextMerchant ${CurrencyFormatter.formatCurrency(intervalNextAmount, currency)} $dayLabel"
+    } else {
+        "Open for full list"
+    }
+    val intervalCountLabel = when {
+        intervalRecurringCount <= 0 -> null
+        intervalRecurringCount == 1 -> "1 longer-cycle bill"
+        else -> "$intervalRecurringCount longer-cycle bills"
+    }
+
+    FinndotCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Dimensions.Padding.content),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            if (expectedCount > 0) {
+                LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Text(
+                text = "Monthly pattern (this month)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = CurrencyFormatter.formatCurrency(totalPredicted, currency),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = nextLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+            )
+
+            if (intervalRecurringCount > 0) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
+                Text(
+                    text = "Longer-cycle recurring",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                intervalCountLabel?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = intervalNextLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
         }
     }
 }

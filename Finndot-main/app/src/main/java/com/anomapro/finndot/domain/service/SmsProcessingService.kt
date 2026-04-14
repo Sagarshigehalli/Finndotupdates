@@ -173,8 +173,10 @@ class SmsProcessingService @Inject constructor(
                     }
 
                     // After rules: SMS transfer heuristic (rules win for fields they already set)
+                    val afterRulesWithId = modifiedTransaction.copy(id = rowId)
                     var txForDownstream = transferLikeSmsClassifier.applyAfterRules(modifiedTransaction, body)
-                    if (txForDownstream != modifiedTransaction) {
+                        .copy(id = rowId)
+                    if (txForDownstream != afterRulesWithId) {
                         transactionRepository.updateTransaction(txForDownstream)
                         Log.d(TAG, "Applied transfer-like SMS heuristic for transaction id=$rowId")
                     }
@@ -185,6 +187,7 @@ class SmsProcessingService @Inject constructor(
                 } catch (e: Exception) {
                     Log.e(TAG, "Error applying rules: ${e.message}", e)
                     val txAfterHeuristic = transferLikeSmsClassifier.applyAfterRules(savedEntity, body)
+                        .copy(id = rowId)
                     if (txAfterHeuristic != savedEntity) {
                         transactionRepository.updateTransaction(txAfterHeuristic)
                     }

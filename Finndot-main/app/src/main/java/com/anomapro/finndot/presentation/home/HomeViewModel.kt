@@ -23,6 +23,7 @@ import com.anomapro.finndot.data.repository.BudgetRepository
 import com.anomapro.finndot.data.repository.LlmRepository
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
+import com.anomapro.finndot.domain.usecase.GetRecurringBillPredictionsUseCase
 import com.anomapro.finndot.worker.OptimizedSmsReaderWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -58,6 +59,7 @@ class HomeViewModel @Inject constructor(
     private val inAppUpdateManager: InAppUpdateManager,
     private val inAppReviewManager: InAppReviewManager,
     private val usageStatsService: UsageStatsService,
+    private val getRecurringBillPredictionsUseCase: GetRecurringBillPredictionsUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     
@@ -239,6 +241,82 @@ class HomeViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(loadingMessage = "Loading visuals...")
             loadHomeVisualsData()
         }
+
+        viewModelScope.launch {
+            refreshRecurringMonthlyCommitments()
+        }
+    }
+
+    private suspend fun refreshRecurringMonthlyCommitments() {
+        try {
+            val today = LocalDate.now()
+            val selectedCurrency = _uiState.value.selectedCurrency
+            val result = getRecurringBillPredictionsUseCase(today)
+            val monthlyPreds = result.monthly
+                .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
+            val intervalPreds = result.interval
+                .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
+
+            val thisMonth = YearMonth.from(today)
+            val thisMonthPredictions = monthlyPreds.filter { YearMonth.from(it.nextDueDate) == thisMonth }
+            val totalPredicted = thisMonthPredictions.sumOf { it.expectedAmount }
+            val nextDue = monthlyPreds
+                .filter { it.daysUntilDue >= 0 }
+                .minByOrNull { it.daysUntilDue }
+                ?: monthlyPreds.minByOrNull { it.daysUntilDue }
+            val nextInterval = intervalPreds
+                .filter { it.daysUntilDue >= 0 }
+                .minByOrNull { it.daysUntilDue }
+                ?: intervalPreds.minByOrNull { it.daysUntilDue }
+
+            val startOfMonth = today.withDayOfMonth(1).atStartOfDay()
+            val endOfMonth = today.withDayOfMonth(today.lengthOfMonth()).atTime(23, 59, 59)
+            val monthTx = transactionRepository.getTransactionsBetweenDates(startOfMonth, endOfMonth).first()
+                .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
+                .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
+            val paidByMerchant = monthTx
+                .groupBy { (it.normalizedMerchantName ?: it.merchantName).trim().lowercase() }
+                .mapValues { (_, txs) -> txs.sumOf { it.amount.abs() } }
+            val paidPredicted = thisMonthPredictions.sumOf { prediction ->
+                paidByMerchant[prediction.merchant.trim().lowercase()]?.let { paid ->
+                    minOf(paid, prediction.expectedAmount)
+                } ?: BigDecimal.ZERO
+            }
+            val progress = if (totalPredicted > BigDecimal.ZERO) {
+                (paidPredicted / totalPredicted).toFloat().coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+
+            _uiState.value = _uiState.value.copy(
+                recurringBillsPredictedTotalThisMonth = totalPredicted,
+                recurringBillsExpectedCountThisMonth = thisMonthPredictions.size,
+                recurringBillsPaidAmountThisMonth = paidPredicted,
+                recurringBillsProgressThisMonth = progress,
+                recurringBillsNextMerchant = nextDue?.merchant,
+                recurringBillsNextAmount = nextDue?.expectedAmount,
+                recurringBillsNextDaysUntilDue = nextDue?.daysUntilDue,
+                intervalRecurringCount = intervalPreds.size,
+                intervalRecurringNextMerchant = nextInterval?.merchant,
+                intervalRecurringNextAmount = nextInterval?.expectedAmount,
+                intervalRecurringNextDaysUntilDue = nextInterval?.daysUntilDue,
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("HomeViewModel", "refreshRecurringMonthlyCommitments failed", e)
+            _uiState.value = _uiState.value.copy(
+                recurringBillsPredictedTotalThisMonth = BigDecimal.ZERO,
+                recurringBillsExpectedCountThisMonth = 0,
+                recurringBillsPaidAmountThisMonth = BigDecimal.ZERO,
+                recurringBillsProgressThisMonth = 0f,
+                recurringBillsNextMerchant = null,
+                recurringBillsNextAmount = null,
+                recurringBillsNextDaysUntilDue = null,
+                intervalRecurringCount = 0,
+                intervalRecurringNextMerchant = null,
+                intervalRecurringNextAmount = null,
+                intervalRecurringNextDaysUntilDue = null,
+            )
+        }
     }
     
     private fun loadHomeVisualsData() {
@@ -246,7 +324,7 @@ class HomeViewModel @Inject constructor(
             val now = LocalDate.now()
             val selectedCurrency = _uiState.value.selectedCurrency
             val startOfMonth = now.withDayOfMonth(1).atStartOfDay()
-            val endOfMonth = now.atTime(23, 59, 59)
+            val endOfMonth = now.withDayOfMonth(now.lengthOfMonth()).atTime(23, 59, 59)
             val sevenDaysAgo = now.minusDays(6).atStartOfDay()
             
             transactionRepository.getTransactionsBetweenDates(sevenDaysAgo, endOfMonth).collect { transactions ->
@@ -858,6 +936,7 @@ class HomeViewModel @Inject constructor(
             refreshBudgetData()
             loadSpendingTrendData()
             loadHomeVisualsData()
+            refreshRecurringMonthlyCommitments()
             val recent = transactionRepository.getRecentTransactions(limit = 3).first()
             _uiState.value = _uiState.value.copy(recentTransactions = recent)
             loadDailySummary()
@@ -1053,6 +1132,7 @@ class HomeViewModel @Inject constructor(
         loadSpendingTrendData()
         loadCategoryDistributionData()
         loadHomeVisualsData()
+        viewModelScope.launch { refreshRecurringMonthlyCommitments() }
     }
 
     fun selectTimeRange(range: HomeTimeRange) {
@@ -1250,5 +1330,16 @@ data class HomeUiState(
     val projectedMonthEndSpend: BigDecimal = BigDecimal.ZERO,
     val daysLeftInMonth: Int = 0,
     val monthProgressPercent: Float = 0f,
-    val dailyBudgetAmount: BigDecimal = BigDecimal.ZERO
+    val dailyBudgetAmount: BigDecimal = BigDecimal.ZERO,
+    val recurringBillsPredictedTotalThisMonth: BigDecimal = BigDecimal.ZERO,
+    val recurringBillsExpectedCountThisMonth: Int = 0,
+    val recurringBillsPaidAmountThisMonth: BigDecimal = BigDecimal.ZERO,
+    val recurringBillsProgressThisMonth: Float = 0f,
+    val recurringBillsNextMerchant: String? = null,
+    val recurringBillsNextAmount: BigDecimal? = null,
+    val recurringBillsNextDaysUntilDue: Int? = null,
+    val intervalRecurringCount: Int = 0,
+    val intervalRecurringNextMerchant: String? = null,
+    val intervalRecurringNextAmount: BigDecimal? = null,
+    val intervalRecurringNextDaysUntilDue: Int? = null,
 )
