@@ -270,7 +270,7 @@ class HomeViewModel @Inject constructor(
                 ?: intervalPreds.minByOrNull { it.daysUntilDue }
 
             val startOfMonth = today.withDayOfMonth(1).atStartOfDay()
-            val endOfMonth = today.atTime(23, 59, 59)
+            val endOfMonth = today.withDayOfMonth(today.lengthOfMonth()).atTime(23, 59, 59)
             val monthTx = transactionRepository.getTransactionsBetweenDates(startOfMonth, endOfMonth).first()
                 .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
                 .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
@@ -324,7 +324,7 @@ class HomeViewModel @Inject constructor(
             val now = LocalDate.now()
             val selectedCurrency = _uiState.value.selectedCurrency
             val startOfMonth = now.withDayOfMonth(1).atStartOfDay()
-            val endOfMonth = now.atTime(23, 59, 59)
+            val endOfMonth = now.withDayOfMonth(now.lengthOfMonth()).atTime(23, 59, 59)
             val sevenDaysAgo = now.minusDays(6).atStartOfDay()
             
             transactionRepository.getTransactionsBetweenDates(sevenDaysAgo, endOfMonth).collect { transactions ->

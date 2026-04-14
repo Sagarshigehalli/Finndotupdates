@@ -100,7 +100,7 @@ class MonthlyBillsViewModel @Inject constructor(
                     .sumOf { it.expectedAmount }
 
                 val startOfMonth = today.withDayOfMonth(1).atStartOfDay()
-                val endOfMonth = today.atTime(23, 59, 59)
+                val endOfMonth = today.withDayOfMonth(today.lengthOfMonth()).atTime(23, 59, 59)
                 val monthTx = transactionRepository.getTransactionsBetweenDates(startOfMonth, endOfMonth).first()
                     .filter { it.currency.equals(selectedCurrency, ignoreCase = true) }
                     .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
