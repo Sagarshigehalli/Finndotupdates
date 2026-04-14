@@ -46,6 +46,7 @@ fun MainScreen(
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    val routeId = currentRoute?.substringBefore("?").orEmpty()
     val spotlightState by spotlightViewModel.spotlightState.collectAsState()
 
     LaunchedEffect(currentRoute) {
@@ -61,7 +62,7 @@ fun MainScreen(
             Scaffold(
             topBar = {
             FinndotTopAppBar(
-                title = when (currentRoute) {
+                title = when (routeId) {
                     "home" -> "Finndot"
                     "merchants" -> "Merchants"
                     "transactions" -> "Transactions"
@@ -78,10 +79,11 @@ fun MainScreen(
                     "add_account" -> "Add Account"
                     "faq" -> "Help & FAQ"
                     "budget_settings" -> "Budget Settings"
+                    "monthly_bills" -> "Recurring & upcoming monthly commitments"
                     else -> "Finndot"
                 },
-                showBackButton = currentRoute in listOf("chat", "settings", "subscriptions", "transactions", "categories", "unrecognized_sms", "manage_accounts", "add_account", "faq", "budget_settings", "user_profile", "merchant_mapping"),
-                showSettingsButton = currentRoute !in listOf("settings", "categories", "unrecognized_sms", "manage_accounts", "add_account", "faq", "user_profile"),
+                showBackButton = routeId in listOf("chat", "settings", "subscriptions", "transactions", "categories", "unrecognized_sms", "manage_accounts", "add_account", "faq", "budget_settings", "user_profile", "merchant_mapping", "monthly_bills"),
+                showSettingsButton = routeId !in listOf("settings", "categories", "unrecognized_sms", "manage_accounts", "add_account", "faq", "user_profile"),
                 onBackClick = { navController.popBackStack() },
                 onSettingsClick = { navController.navigate("settings") }
             )
@@ -104,6 +106,7 @@ fun MainScreen(
         ) {
             composable("home") {
                 val homeViewModel: com.anomapro.finndot.presentation.home.HomeViewModel = hiltViewModel()
+                val homeUiState by homeViewModel.uiState.collectAsState()
                 HomeScreen(
                     viewModel = homeViewModel,
                     navController = rootNavController ?: navController,
@@ -144,6 +147,9 @@ fun MainScreen(
                     },
                     onNavigateToBudgetSettings = {
                         navController.navigate("budget_settings")
+                    },
+                    onNavigateToRecurringCommitments = {
+                        navController.navigate("monthly_bills?currency=${homeUiState.selectedCurrency}")
                     },
                     onTransactionClick = { transactionId ->
                         rootNavController?.navigate(
@@ -392,6 +398,22 @@ fun MainScreen(
                     onNavigateBack = {
                         navController.popBackStack()
                     }
+                )
+            }
+
+            composable(
+                route = "monthly_bills?currency={currency}",
+                arguments = listOf(
+                    navArgument("currency") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                )
+            ) { backStackEntry ->
+                val currency = backStackEntry.arguments?.getString("currency") ?: "INR"
+                com.anomapro.finndot.presentation.home.MonthlyBillsScreen(
+                    selectedCurrency = currency
                 )
             }
         }
