@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.anomapro.finndot.data.database.entity.CategoryEntity
 import com.anomapro.finndot.data.database.entity.TransactionEntity
+import com.anomapro.finndot.domain.model.CounterpartyMemoryKey
 import com.anomapro.finndot.data.database.entity.TransactionType
 import java.math.BigDecimal
 import com.anomapro.finndot.ui.components.BrandIcon
@@ -61,6 +62,8 @@ fun TransactionDetailScreen(
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val applyToAllFromMerchant by viewModel.applyToAllFromMerchant.collectAsStateWithLifecycle()
     val updateExistingTransactions by viewModel.updateExistingTransactions.collectAsStateWithLifecycle()
+    val rememberForSimilarSms by viewModel.rememberForSimilarSms.collectAsStateWithLifecycle()
+    val savedCounterpartyMemory by viewModel.savedCounterpartyMemory.collectAsStateWithLifecycle()
     val existingTransactionCount by viewModel.existingTransactionCount.collectAsStateWithLifecycle()
     val showDeleteDialog by viewModel.showDeleteDialog.collectAsStateWithLifecycle()
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
@@ -72,10 +75,17 @@ fun TransactionDetailScreen(
     val scope = rememberCoroutineScope()
     
     // Show success snackbar
-    LaunchedEffect(saveSuccess) {
+    LaunchedEffect(saveSuccess, savedCounterpartyMemory) {
         if (saveSuccess) {
+            val counterpartyMemoryHint = savedCounterpartyMemory
             scope.launch {
-                snackbarHostState.showSnackbar("Transaction updated successfully")
+                snackbarHostState.showSnackbar(
+                    if (counterpartyMemoryHint) {
+                        "Saved. Future SMS for this payee and account will use the same type and category."
+                    } else {
+                        "Transaction updated successfully"
+                    }
+                )
                 viewModel.clearSaveSuccess()
             }
         }
@@ -198,6 +208,7 @@ fun TransactionDetailScreen(
                 isEditMode = isEditMode,
                 applyToAllFromMerchant = applyToAllFromMerchant,
                 updateExistingTransactions = updateExistingTransactions,
+                rememberForSimilarSms = rememberForSimilarSms,
                 existingTransactionCount = existingTransactionCount,
                 viewModel = viewModel,
                 accountPrimaryCurrency = accountPrimaryCurrency,
@@ -248,6 +259,7 @@ private fun TransactionDetailContent(
     isEditMode: Boolean,
     applyToAllFromMerchant: Boolean,
     updateExistingTransactions: Boolean,
+    rememberForSimilarSms: Boolean,
     existingTransactionCount: Int,
     viewModel: TransactionDetailViewModel,
     accountPrimaryCurrency: String,
@@ -287,6 +299,7 @@ private fun TransactionDetailContent(
                 transaction = transaction,
                 applyToAllFromMerchant = applyToAllFromMerchant,
                 updateExistingTransactions = updateExistingTransactions,
+                rememberForSimilarSms = rememberForSimilarSms,
                 existingTransactionCount = existingTransactionCount,
                 viewModel = viewModel
             )
@@ -803,9 +816,11 @@ private fun EditableExtractedInfoCard(
     transaction: TransactionEntity,
     applyToAllFromMerchant: Boolean,
     updateExistingTransactions: Boolean,
+    rememberForSimilarSms: Boolean,
     existingTransactionCount: Int,
     viewModel: TransactionDetailViewModel
 ) {
+    val canRememberCounterparty = CounterpartyMemoryKey.fromEntity(transaction) != null
     FinndotCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -857,6 +872,25 @@ private fun EditableExtractedInfoCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+            }
+
+            if (canRememberCounterparty) {
+                Spacer(modifier = Modifier.height(Spacing.xs))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = rememberForSimilarSms,
+                        onCheckedChange = { viewModel.setRememberForSimilarSms(it) }
+                    )
+                    Spacer(modifier = Modifier.width(Spacing.sm))
+                    Text(
+                        text = "Remember type & category for similar SMS (same payee and account)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
             
             // Update existing transactions checkbox (only show if there are other transactions)

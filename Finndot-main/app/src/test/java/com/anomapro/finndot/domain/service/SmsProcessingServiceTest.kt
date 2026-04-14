@@ -9,7 +9,12 @@ import com.finndot.parser.core.bank.BankParserFactory
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
-import org.mockito.kotlin.*
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.MockedStatic
 import org.mockito.Mockito.mockStatic
 import java.math.BigDecimal
@@ -26,7 +31,11 @@ class SmsProcessingServiceTest {
     private lateinit var unrecognizedSmsRepository: UnrecognizedSmsRepository
     
     private lateinit var merchantMappingRepository: MerchantMappingRepository
-    
+    private lateinit var merchantNameMappingRepository: MerchantNameMappingRepository
+    private lateinit var internalTransferPairingService: InternalTransferPairingService
+    private lateinit var transferLikeSmsClassifier: TransferLikeSmsClassifier
+    private lateinit var counterpartyMemoryApplier: CounterpartyMemoryApplier
+
     private lateinit var smsProcessingService: SmsProcessingService
     private lateinit var logMock: MockedStatic<android.util.Log>
 
@@ -47,6 +56,15 @@ class SmsProcessingServiceTest {
         subscriptionRepository = mock()
         unrecognizedSmsRepository = mock()
         merchantMappingRepository = mock()
+        merchantNameMappingRepository = mock()
+        internalTransferPairingService = mock(lenient = true)
+        transferLikeSmsClassifier = mock()
+        counterpartyMemoryApplier = mock()
+        whenever(transferLikeSmsClassifier.applyAfterRules(any(), any())).thenAnswer { it.getArgument(0) }
+        runBlocking {
+            whenever(merchantNameMappingRepository.getNormalizedName(any())).thenAnswer { it.getArgument(0) }
+            whenever(counterpartyMemoryApplier.applyAfterMerchantMapping(any())).thenAnswer { it.getArgument(0) }
+        }
 
         smsProcessingService = SmsProcessingService(
             llmSmsParser,
@@ -57,7 +75,11 @@ class SmsProcessingServiceTest {
             merchantMappingRepository,
             unrecognizedSmsRepository,
             ruleRepository,
-            ruleEngine
+            ruleEngine,
+            internalTransferPairingService,
+            transferLikeSmsClassifier,
+            merchantNameMappingRepository,
+            counterpartyMemoryApplier,
         )
     }
     
@@ -98,6 +120,7 @@ class SmsProcessingServiceTest {
         // Then
         verify(llmSmsParser).parse(eq(body), eq(sender), eq(timestamp))
         verify(transactionRepository).insertTransaction(any())
+        verify(transferLikeSmsClassifier, atLeastOnce()).applyAfterRules(any(), eq(body))
         // Cannot verify BankParserFactory static call easily, but we know it shouldn't be called if LLM succeeds
         // In this implementation, we can't verify static calls without PowerMock
         }

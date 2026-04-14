@@ -104,6 +104,37 @@ object CompiledPatterns {
     }
     
     /**
+     * SMS heuristics for bank-rail / account-to-account transfers (Part 4).
+     * Used with [com.anomapro.finndot.domain.service.TransferLikeSmsClassifier]; keep POS/merchant SMS out of transfer rails.
+     */
+    object TransferHeuristic {
+        /**
+         * Strong signals: NEFT/IMPS/RTGS, fund transfer wording, beneficiary, IFSC, UTR, masked account-to-account phrasing.
+         * Intentionally excludes bare "UPI" (most UPI merchant debits would false-positive).
+         */
+        val TRANSFER_RAILS: Regex = Regex(
+            """\b(?:NEFT|IMPS|RTGS|ECS|ACH)\b|Fund(?:s)?\s+Transfer|Beneficiary|\bIFSC\b|\bUTR\b|""" +
+                """(?:To|From|Towards)\s+A/?c(?:count)?|""" +
+                """(?:Acct|A/c)\s*(?:to|from)\s+(?:Acct|A/c)|""" +
+                """(?:INB|INF)\s*[-/]\s*(?:FT|NEFT|IMPS|RTGS)|""" +
+                """(?:Credited|Debited).{0,120}\b(?:NEFT|IMPS|RTGS)\b""",
+            RegexOption.IGNORE_CASE
+        )
+
+        /**
+         * If any of these match, treat SMS as a merchant / POS / card purchase — do not apply transfer heuristic.
+         */
+        val MERCHANT_OR_POS_BLOCK: Regex = Regex(
+            """\bPOS\b|Point\s+of\s+Sale|(?:Card|Debit)\s+purchase|Online\s+payment|""" +
+                """(?:Tap|Contactless)\s*(?:&|and)?\s*Pay|UPI[-/]\s*(?:Mandate|AutoPay|Collect)|""" +
+                """Amazon|AMZN|Flipkart|FKRT|Swiggy|Zomato|Uber|Ola|Netflix|Spotify|""" +
+                """BookMyShow|IRCTC|MMT|MakeMyTrip|Myntra|Nykaa|BigBasket|Blinkit|""" +
+                """Grofers|Domino|Starbucks|McDonald|KFC|Croma|Reliance\s+Digital""",
+            RegexOption.IGNORE_CASE
+        )
+    }
+
+    /**
      * Cleaning patterns
      */
     object Cleaning {

@@ -11,6 +11,7 @@ import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.presentation.common.TimePeriod
 import com.anomapro.finndot.presentation.common.TransactionTypeFilter
 import com.anomapro.finndot.presentation.common.getDateRangeForPeriod
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import androidx.compose.ui.graphics.Color
 import com.anomapro.finndot.ui.components.CategorySpendingData
 import com.anomapro.finndot.ui.components.MonthlySpendingData
@@ -243,10 +244,10 @@ class AnalyticsViewModel @Inject constructor(
 
                 // Income vs expenses for selected period (helps low-income users see what's left)
                 val periodIncome = currencyFilteredTransactions
-                    .filter { it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                     .sumOf { it.amount.abs() }
                 val periodExpenses = currencyFilteredTransactions
-                    .filter { it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .sumOf { it.amount.abs() }
                 val periodRemaining = periodIncome.subtract(periodExpenses)
 
@@ -261,14 +262,14 @@ class AnalyticsViewModel @Inject constructor(
                 val filteredTransactions = when (_transactionTypeFilter.value) {
                     TransactionTypeFilter.ALL -> currencyFilteredTransactions
                     TransactionTypeFilter.INCOME -> currencyFilteredTransactions.filter {
-                        it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME
+                        SpendingAnalyticsFilter.countsAsTrueIncome(it)
                     }
                     TransactionTypeFilter.EXPENSE -> currencyFilteredTransactions.filter {
-                        it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE
+                        it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE &&
+                            SpendingAnalyticsFilter.countsAsTrueSpending(it)
                     }
                     TransactionTypeFilter.SPEND -> currencyFilteredTransactions.filter {
-                        it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE ||
-                        it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.CREDIT
+                        SpendingAnalyticsFilter.countsAsTrueSpending(it)
                     }
                     TransactionTypeFilter.CREDIT -> currencyFilteredTransactions.filter {
                         it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.CREDIT
@@ -338,8 +339,10 @@ class AnalyticsViewModel @Inject constructor(
                     .filter { it.dateTime >= currentMonthStart && it.dateTime <= currentMonthEnd }
                     .filter { 
                         when (_transactionTypeFilter.value) {
-                            TransactionTypeFilter.EXPENSE -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE
-                            TransactionTypeFilter.INCOME -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME
+                            TransactionTypeFilter.EXPENSE ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE &&
+                                    SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                            TransactionTypeFilter.INCOME -> SpendingAnalyticsFilter.countsAsTrueIncome(it)
                             else -> true
                         }
                     }
@@ -349,8 +352,10 @@ class AnalyticsViewModel @Inject constructor(
                     .filter { it.dateTime >= lastMonthStart && it.dateTime <= lastMonthEnd }
                     .filter { 
                         when (_transactionTypeFilter.value) {
-                            TransactionTypeFilter.EXPENSE -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE
-                            TransactionTypeFilter.INCOME -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME
+                            TransactionTypeFilter.EXPENSE ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE &&
+                                    SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                            TransactionTypeFilter.INCOME -> SpendingAnalyticsFilter.countsAsTrueIncome(it)
                             else -> true
                         }
                     }
@@ -362,21 +367,31 @@ class AnalyticsViewModel @Inject constructor(
                 val monthlyTrendData = currencyFilteredTransactions
                     .filter {
                         when (_transactionTypeFilter.value) {
-                            TransactionTypeFilter.EXPENSE -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE
-                            TransactionTypeFilter.INCOME -> it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME
+                            TransactionTypeFilter.EXPENSE ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE &&
+                                    SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                            TransactionTypeFilter.INCOME -> SpendingAnalyticsFilter.countsAsTrueIncome(it)
+                            TransactionTypeFilter.SPEND -> SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                            TransactionTypeFilter.CREDIT ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.CREDIT &&
+                                    SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                            TransactionTypeFilter.TRANSFER ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.TRANSFER
+                            TransactionTypeFilter.INVESTMENT ->
+                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INVESTMENT
                             else -> true
                         }
                     }
                     .groupBy { YearMonth.from(it.dateTime) }
                     .map { (month, monthTxns) ->
                         val expenses = monthTxns
-                            .filter { it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE }
+                            .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             .sumOf { it.amount.abs() }
                         val income = monthTxns
-                            .filter { it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME }
+                            .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                             .sumOf { it.amount.abs() }
                         val regret = monthTxns
-                            .filter { it.isRegret && it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE }
+                            .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             .sumOf { it.amount.abs() }
                         MonthlySpendingData(month, expenses, income, regret, _selectedCurrency.value)
                     }
@@ -398,10 +413,13 @@ class AnalyticsViewModel @Inject constructor(
                 val sym = CurrencyFormatter.getCurrencySymbol(_selectedCurrency.value)
 
                 // 1. Regret spending - money you wish you hadn't spent (high impact)
-                val regretTotal = filteredTransactions.filter { it.isRegret }.sumOf { it.amount.abs() }
+                val regretTotal = filteredTransactions
+                    .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
+                    .sumOf { it.amount.abs() }
                 if (regretTotal > BigDecimal.ZERO) {
                     val regretCount = filteredTransactions.count { it.isRegret }
-                    val topRegretCategory = filteredTransactions.filter { it.isRegret }
+                    val topRegretCategory = filteredTransactions
+                        .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                         .groupBy { it.category ?: "Others" }
                         .maxByOrNull { it.value.sumOf { t -> t.amount.abs() } }
                     insights.add(SavingsInsight(
@@ -539,7 +557,9 @@ class AnalyticsViewModel @Inject constructor(
 
                 // 9. Day-of-week pattern
                 if (_transactionTypeFilter.value == TransactionTypeFilter.EXPENSE && currentMonthTransactions.isNotEmpty()) {
-                    val byDay = currentMonthTransactions.groupBy { it.dateTime.dayOfWeek }
+                    val byDay = currentMonthTransactions
+                        .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
+                        .groupBy { it.dateTime.dayOfWeek }
                     val weekend = listOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)
                     val weekendTotal = byDay.filterKeys { it in weekend }.values.flatten().sumOf { it.amount.abs() }
                     val weekdayTotal = byDay.filterKeys { it !in weekend }.values.flatten().sumOf { it.amount.abs() }
@@ -567,10 +587,7 @@ class AnalyticsViewModel @Inject constructor(
                     val spendByCategory = transactions
                         .filter { it.currency == _selectedCurrency.value }
                         .filter { it.dateTime >= currentMonthStart && it.dateTime <= currentMonthEnd }
-                        .filter {
-                            it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.EXPENSE ||
-                                it.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.CREDIT
-                        }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                         .groupBy { it.category ?: "Others" }
                     budgets.forEach { budget ->
                         if (budget.category != "All") {

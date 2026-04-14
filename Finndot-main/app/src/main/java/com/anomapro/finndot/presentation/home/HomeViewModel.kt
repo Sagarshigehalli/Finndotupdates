@@ -45,6 +45,7 @@ import javax.inject.Inject
 import com.anomapro.finndot.ui.components.MonthlySpendingData
 import com.anomapro.finndot.ui.components.CategorySpendingData
 import com.anomapro.finndot.ui.icons.CategoryMapping
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -251,7 +252,7 @@ class HomeViewModel @Inject constructor(
             transactionRepository.getTransactionsBetweenDates(sevenDaysAgo, endOfMonth).collect { transactions ->
                 val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
                 val expenseAndCredit = currencyTransactions
-                    .filter { it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 
                 val last7Days = (0..6).map { dayOffset ->
                     val day = now.minusDays((6 - dayOffset).toLong())
@@ -266,7 +267,7 @@ class HomeViewModel @Inject constructor(
                     it.dateTime >= startOfMonth && it.dateTime <= endOfMonth
                 }
                 val monthExpenseCredit = currentMonthOnly
-                    .filter { it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 val monthlyRegret = monthExpenseCredit
                     .filter { it.isRegret }
                     .sumOf { it.amount.abs() }
@@ -329,7 +330,7 @@ class HomeViewModel @Inject constructor(
                         
                         val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
                         val actualSpending = currencyTransactions
-                            .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                            .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             .sumOf { it.amount.abs() }
                         
                         val customBudgetAmount = totalBudget?.amount ?: BigDecimal.ZERO
@@ -423,7 +424,7 @@ class HomeViewModel @Inject constructor(
                 val transactions = transactionRepository.getTransactionsBetweenDates(startDate, endDate).first()
                 val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
                 val actualSpending = currencyTransactions
-                    .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .sumOf { it.amount.abs() }
                 
                 val customBudgetAmount = totalBudget?.amount ?: BigDecimal.ZERO
@@ -490,13 +491,13 @@ class HomeViewModel @Inject constructor(
                     .groupBy { YearMonth.from(it.dateTime) }
                     .map { (month, monthTransactions) ->
                         val expenses = monthTransactions
-                            .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                            .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             .sumOf { it.amount.abs() }
                         val income = monthTransactions
-                            .filter { it.transactionType == TransactionType.INCOME }
+                            .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                             .sumOf { it.amount.abs() }
                         val regretAmount = monthTransactions
-                            .filter { it.isRegret && (it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT) }
+                            .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             .sumOf { it.amount.abs() }
                         MonthlySpendingData(
                             month = month,
@@ -547,7 +548,7 @@ class HomeViewModel @Inject constructor(
                 val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
                 
                 val expenses = currencyTransactions
-                    .filter { it.transactionType == TransactionType.EXPENSE }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 
                 val totalExpenses = expenses.sumOf { it.amount.abs() }
                 
@@ -611,11 +612,11 @@ class HomeViewModel @Inject constructor(
                 
                 // Calculate total income and spending for the selected period
                 val totalIncome = currencyTransactions
-                    .filter { it.transactionType == TransactionType.INCOME }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                     .sumOf { it.amount.abs() }
                 
                 val totalSpend = currencyTransactions
-                    .filter { it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .sumOf { it.amount.abs() }
 
                 val divisor = BigDecimal(months).coerceAtLeast(BigDecimal.ONE)
@@ -626,7 +627,7 @@ class HomeViewModel @Inject constructor(
                 // Use already-loaded currencyTransactions (covers selected range) - filter to last 3 months
                 val threeMonthsAgoStart = now.minusMonths(2).withDayOfMonth(1).atStartOfDay()
                 val incomeLast3Months = currencyTransactions
-                    .filter { it.transactionType == TransactionType.INCOME && it.dateTime >= threeMonthsAgoStart }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) && it.dateTime >= threeMonthsAgoStart }
                     .sumOf { it.amount.abs() }
                 val recommendedBudget = if (incomeLast3Months > BigDecimal.ZERO) {
                     (incomeLast3Months / BigDecimal(3)).multiply(BigDecimal("0.85"))
@@ -1067,7 +1068,7 @@ class HomeViewModel @Inject constructor(
         val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
 
         val creditCardTotal = currencyTransactions
-            .filter { it.transactionType == TransactionType.CREDIT }
+            .filter { it.transactionType == TransactionType.CREDIT && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
             .sumOf { it.amount }
         val transferTotal = currencyTransactions
             .filter { it.transactionType == TransactionType.TRANSFER }
@@ -1154,15 +1155,15 @@ class HomeViewModel @Inject constructor(
                 val currencyTransactions = transactions.filter { it.currency == selectedCurrency }
                 
                 val earnings = currencyTransactions
-                    .filter { it.transactionType == TransactionType.INCOME }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                     .sumOf { it.amount.abs() }
                 
                 val spending = currencyTransactions
-                    .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .sumOf { it.amount.abs() }
                 
                 val regretSpending = currencyTransactions
-                    .filter { it.isRegret && (it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT) }
+                    .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .sumOf { it.amount.abs() }
                 
                 val netAmount = earnings - spending

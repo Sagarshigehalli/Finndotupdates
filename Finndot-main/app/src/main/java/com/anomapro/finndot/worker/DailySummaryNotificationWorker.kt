@@ -12,7 +12,7 @@ import androidx.work.WorkerParameters
 import com.anomapro.finndot.MainActivity
 import com.anomapro.finndot.R
 import com.anomapro.finndot.data.database.FinndotDatabase
-import com.anomapro.finndot.data.database.entity.TransactionType
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import com.anomapro.finndot.data.manager.DailySummaryNotificationManager
 import com.anomapro.finndot.data.preferences.UserPreferencesRepository
 import com.anomapro.finndot.utils.CurrencyFormatter
@@ -61,15 +61,15 @@ class DailySummaryNotificationWorker @AssistedInject constructor(
             
             // Calculate summary
             val earnings = currencyTransactions
-                .filter { it.transactionType == TransactionType.INCOME }
+                .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                 .sumOf { it.amount.abs() }
             
             val spending = currencyTransactions
-                .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 .sumOf { it.amount.abs() }
             
             val regretSpending = currencyTransactions
-                .filter { it.isRegret && (it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT) }
+                .filter { it.isRegret && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 .sumOf { it.amount.abs() }
             
             val netAmount = earnings - spending

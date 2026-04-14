@@ -11,10 +11,13 @@ import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.CardRepository
 import com.anomapro.finndot.data.repository.MerchantMappingRepository
 import com.anomapro.finndot.data.repository.MerchantNameMappingRepository
+import com.anomapro.finndot.domain.service.CounterpartyMemoryApplier
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
 import com.anomapro.finndot.domain.repository.RuleRepository
+import com.anomapro.finndot.domain.service.InternalTransferPairingService
 import com.anomapro.finndot.domain.service.RuleEngine
+import com.anomapro.finndot.domain.service.TransferLikeSmsClassifier
 import com.finndot.parser.core.ParsedTransaction
 import com.finndot.parser.core.bank.BankParserFactory
 import java.math.BigDecimal
@@ -37,7 +40,10 @@ class SmsTransactionProcessor @Inject constructor(
     private val merchantNameMappingRepository: MerchantNameMappingRepository,
     private val subscriptionRepository: SubscriptionRepository,
     private val ruleRepository: RuleRepository,
-    private val ruleEngine: RuleEngine
+    private val ruleEngine: RuleEngine,
+    private val internalTransferPairingService: InternalTransferPairingService,
+    private val transferLikeSmsClassifier: TransferLikeSmsClassifier,
+    private val counterpartyMemoryApplier: CounterpartyMemoryApplier,
 ) {
     companion object {
         private const val TAG = "SmsTransactionProcessor"
@@ -134,12 +140,14 @@ class SmsTransactionProcessor @Inject constructor(
                 entityWithNormalizedName
             }
 
+            val entityWithMemory = counterpartyMemoryApplier.applyAfterMerchantMapping(entityWithMapping)
+
             // Apply rule engine to the transaction
-            val activeRules = ruleRepository.getActiveRulesByType(entityWithMapping.transactionType)
+            val activeRules = ruleRepository.getActiveRulesByType(entityWithMemory.transactionType)
 
             // Check if this transaction should be blocked
             val blockingRule = ruleEngine.shouldBlockTransaction(
-                entityWithMapping,
+                entityWithMemory,
                 smsBody,
                 activeRules
             )
@@ -150,7 +158,7 @@ class SmsTransactionProcessor @Inject constructor(
             }
 
             val (entityWithRules, ruleApplications) = ruleEngine.evaluateRules(
-                entityWithMapping,
+                entityWithMemory,
                 smsBody,
                 activeRules
             )
@@ -176,9 +184,11 @@ class SmsTransactionProcessor @Inject constructor(
                 entityWithRules
             }
 
-            val rowId = transactionRepository.insertTransaction(finalEntity)
+            val finalWithHeuristic = transferLikeSmsClassifier.applyAfterRules(finalEntity, smsBody)
+
+            val rowId = transactionRepository.insertTransaction(finalWithHeuristic)
             if (rowId != -1L) {
-                Log.d(TAG, "Saved new transaction with ID: $rowId${if (finalEntity.isRecurring) " (Recurring)" else ""}")
+                Log.d(TAG, "Saved new transaction with ID: $rowId${if (finalWithHeuristic.isRecurring) " (Recurring)" else ""}")
 
                 // Save rule applications if any rules were applied
                 if (ruleApplications.isNotEmpty()) {
@@ -186,7 +196,9 @@ class SmsTransactionProcessor @Inject constructor(
                 }
 
                 // Process balance updates
-                processBalanceUpdate(parsedTransaction, finalEntity, rowId)
+                processBalanceUpdate(parsedTransaction, finalWithHeuristic, rowId)
+
+                internalTransferPairingService.tryPairAfterInsert(finalWithHeuristic.copy(id = rowId))
 
                 return ProcessingResult(true, transactionId = rowId)
             } else {

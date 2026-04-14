@@ -25,6 +25,7 @@ import java.time.YearMonth
 import javax.inject.Inject
 import com.anomapro.finndot.ui.components.CategorySpendingData
 import com.anomapro.finndot.ui.icons.CategoryMapping
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
@@ -189,9 +190,7 @@ class TransactionsViewModel @Inject constructor(
                 
                 // Calculate category distribution for selected currency
                 val currencyTransactions = transactions.filter { it.currency == currentCurrency }
-                val expenses = currencyTransactions.filter { 
-                    it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT
-                }
+                val expenses = currencyTransactions.filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 val totalExpenses = expenses.sumOf { it.amount.abs() }
                 
                 val categoryData = if (totalExpenses > BigDecimal.ZERO) {
@@ -443,12 +442,14 @@ class TransactionsViewModel @Inject constructor(
         val typeFilteredFlow = periodFilteredFlow.map { transactions ->
             when (typeFilter) {
                 TransactionTypeFilter.ALL -> transactions
-                TransactionTypeFilter.INCOME -> transactions.filter { it.transactionType == TransactionType.INCOME }
-                TransactionTypeFilter.EXPENSE -> transactions.filter { it.transactionType == TransactionType.EXPENSE }
-                TransactionTypeFilter.SPEND -> transactions.filter {
-                    it.transactionType == TransactionType.EXPENSE || it.transactionType == TransactionType.CREDIT
+                TransactionTypeFilter.INCOME -> transactions.filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
+                TransactionTypeFilter.EXPENSE -> transactions.filter {
+                    it.transactionType == TransactionType.EXPENSE && SpendingAnalyticsFilter.countsAsTrueSpending(it)
                 }
-                TransactionTypeFilter.CREDIT -> transactions.filter { it.transactionType == TransactionType.CREDIT }
+                TransactionTypeFilter.SPEND -> transactions.filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
+                TransactionTypeFilter.CREDIT -> transactions.filter {
+                    it.transactionType == TransactionType.CREDIT && SpendingAnalyticsFilter.countsAsTrueSpending(it)
+                }
                 TransactionTypeFilter.TRANSFER -> transactions.filter { it.transactionType == TransactionType.TRANSFER }
                 TransactionTypeFilter.INVESTMENT -> transactions.filter { it.transactionType == TransactionType.INVESTMENT }
             }
@@ -550,17 +551,17 @@ class TransactionsViewModel @Inject constructor(
 
         val totalsByCurrency = transactionsByCurrency.mapValues { (currency, currencyTransactions) ->
             val income = currencyTransactions
-                .filter { it.transactionType == TransactionType.INCOME }
+                .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                 .sumOf { it.amount.toDouble() }
                 .toBigDecimal()
 
             val expenses = currencyTransactions
-                .filter { it.transactionType == TransactionType.EXPENSE }
+                .filter { it.transactionType == TransactionType.EXPENSE && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 .sumOf { it.amount.toDouble() }
                 .toBigDecimal()
 
             val credit = currencyTransactions
-                .filter { it.transactionType == TransactionType.CREDIT }
+                .filter { it.transactionType == TransactionType.CREDIT && SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                 .sumOf { it.amount.toDouble() }
                 .toBigDecimal()
 

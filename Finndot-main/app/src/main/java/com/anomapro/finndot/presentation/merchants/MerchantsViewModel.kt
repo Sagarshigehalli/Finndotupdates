@@ -2,8 +2,8 @@ package com.anomapro.finndot.presentation.merchants
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.anomapro.finndot.data.database.entity.TransactionType
 import com.anomapro.finndot.data.repository.TransactionRepository
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -77,14 +77,11 @@ class MerchantsViewModel @Inject constructor(
                 // Calculate merchant statistics
                 val merchantData = merchantMap.map { (merchantName, merchantTransactions) ->
                     val debits = merchantTransactions
-                        .filter { 
-                            it.transactionType == TransactionType.EXPENSE || 
-                            it.transactionType == TransactionType.CREDIT
-                        }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                         .sumOf { it.amount.abs() }
                     
                     val credits = merchantTransactions
-                        .filter { it.transactionType == TransactionType.INCOME }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                         .sumOf { it.amount.abs() }
                     
                     val totalAmount = debits + credits

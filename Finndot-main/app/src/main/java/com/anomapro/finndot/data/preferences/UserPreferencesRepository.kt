@@ -52,6 +52,18 @@ class UserPreferencesRepository @Inject constructor(
         val DAILY_SUMMARY_NOTIFICATION_ENABLED = booleanPreferencesKey("daily_summary_notification_enabled")
         val DAILY_SUMMARY_NOTIFICATION_HOUR = intPreferencesKey("daily_summary_notification_hour")
         val DAILY_SUMMARY_NOTIFICATION_MINUTE = intPreferencesKey("daily_summary_notification_minute")
+
+        /** Part 8 — one-time DB backfill for legacy bank-transfer rows. */
+        val HAS_RUN_TRANSFER_CATEGORY_BACKFILL_V1 = booleanPreferencesKey("has_run_transfer_category_backfill_v1")
+    }
+
+    suspend fun hasTransferCategoryBackfillRun(): Boolean =
+        context.dataStore.data.first()[PreferencesKeys.HAS_RUN_TRANSFER_CATEGORY_BACKFILL_V1] == true
+
+    suspend fun setTransferCategoryBackfillRun(done: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.HAS_RUN_TRANSFER_CATEGORY_BACKFILL_V1] = done
+        }
     }
 
     val userPreferences: Flow<UserPreferences> = context.dataStore.data

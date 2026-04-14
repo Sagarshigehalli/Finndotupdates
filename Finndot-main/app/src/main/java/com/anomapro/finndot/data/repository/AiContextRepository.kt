@@ -3,7 +3,7 @@ package com.anomapro.finndot.data.repository
 import com.anomapro.finndot.data.database.dao.SubscriptionDao
 import com.anomapro.finndot.data.database.dao.TransactionDao
 import com.anomapro.finndot.data.database.entity.SubscriptionState
-import com.anomapro.finndot.data.database.entity.TransactionType
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import com.anomapro.finndot.data.model.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -64,12 +64,14 @@ class AiContextRepository @Inject constructor(
         
         // Process in a single pass
         transactions.forEach { transaction ->
-            when (transaction.transactionType) {
-                TransactionType.INCOME -> totalIncome = totalIncome.add(transaction.amount)
-                TransactionType.EXPENSE -> totalExpense = totalExpense.add(transaction.amount)
-                TransactionType.CREDIT -> totalExpense = totalExpense.add(transaction.amount) // Credit counts as expense
-                TransactionType.TRANSFER -> {} // Transfers don't affect income/expense totals
-                TransactionType.INVESTMENT -> {} // Investments are asset reallocation, not expenses
+            when {
+                SpendingAnalyticsFilter.countsAsTrueIncome(transaction) -> {
+                    totalIncome = totalIncome.add(transaction.amount)
+                }
+                SpendingAnalyticsFilter.countsAsTrueSpending(transaction) -> {
+                    totalExpense = totalExpense.add(transaction.amount)
+                }
+                else -> Unit
             }
         }
         
@@ -143,7 +145,7 @@ class AiContextRepository @Inject constructor(
         var totalExpense = BigDecimal.ZERO
         
         transactions
-            .filter { it.transactionType == TransactionType.EXPENSE }
+            .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
             .forEach { transaction ->
                 val category = transaction.category ?: "Others"
                 categoryMap.getOrPut(category) { mutableListOf() }.add(transaction.amount)
@@ -179,7 +181,7 @@ class AiContextRepository @Inject constructor(
             endOfMonth.atTime(23, 59, 59)
         )
         
-        val expenses = transactions.filter { it.transactionType == TransactionType.EXPENSE }
+        val expenses = transactions.filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
         
         // Calculate average daily spending
         val totalExpense = expenses.sumOf { it.amount.toDouble() }.toBigDecimal()

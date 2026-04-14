@@ -4,6 +4,8 @@ import com.anomapro.finndot.data.database.dao.TransactionDao
 import com.anomapro.finndot.data.database.entity.TransactionEntity
 import com.anomapro.finndot.data.database.entity.TransactionType
 import com.anomapro.finndot.data.regret.RegretAutoTagger
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
+import com.anomapro.finndot.domain.service.TransferLikeSmsClassifier
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.math.BigDecimal
@@ -159,10 +161,10 @@ class TransactionRepository @Inject constructor(
         return transactionDao.getTransactionsBetweenDates(startDate, endDate)
             .map { transactions ->
                 val income = transactions
-                    .filter { it.transactionType == TransactionType.INCOME }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                     .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                 val expenses = transactions
-                    .filter { it.transactionType == TransactionType.EXPENSE }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                 MonthlyBreakdown(
                     total = income - expenses,
@@ -189,10 +191,10 @@ class TransactionRepository @Inject constructor(
         return transactionDao.getTransactionsBetweenDates(startDate, endDate)
             .map { transactions ->
                 val income = transactions
-                    .filter { it.transactionType == TransactionType.INCOME }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                     .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                 val expenses = transactions
-                    .filter { it.transactionType == TransactionType.EXPENSE }
+                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                     .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                 MonthlyBreakdown(
                     total = income - expenses,
@@ -216,10 +218,10 @@ class TransactionRepository @Inject constructor(
             .map { transactions ->
                 transactions.groupBy { it.currency }.mapValues { (_, currencyTransactions) ->
                     val income = currencyTransactions
-                        .filter { it.transactionType == TransactionType.INCOME }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                         .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                     val expenses = currencyTransactions
-                        .filter { it.transactionType == TransactionType.EXPENSE }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                         .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                     MonthlyBreakdown(
                         total = income - expenses,
@@ -244,10 +246,10 @@ class TransactionRepository @Inject constructor(
             .map { transactions ->
                 transactions.groupBy { it.currency }.mapValues { (_, currencyTransactions) ->
                     val income = currencyTransactions
-                        .filter { it.transactionType == TransactionType.INCOME }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueIncome(it) }
                         .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                     val expenses = currencyTransactions
-                        .filter { it.transactionType == TransactionType.EXPENSE }
+                        .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                         .fold(BigDecimal.ZERO) { acc, transaction -> acc + transaction.amount }
                     MonthlyBreakdown(
                         total = income - expenses,
@@ -299,4 +301,68 @@ class TransactionRepository @Inject constructor(
      */
     suspend fun getTransactionsWithSms(): List<TransactionEntity> =
         transactionDao.getTransactionsWithSms()
+
+    /**
+     * Finds possible opposite-leg transactions for internal transfer pairing.
+     *
+     * @param excludeId Usually the anchor transaction id (exclude from results).
+     * @param oppositeType Expected type on the other leg (e.g. [TransactionType.INCOME] when anchor is debit/expense).
+     * @param windowStart Inclusive lower bound on [TransactionEntity.dateTime].
+     * @param windowEnd Inclusive upper bound on [TransactionEntity.dateTime].
+     * @param sourceBankName Bank on the anchor SMS (for "different account" filter).
+     * @param sourceAccountNumber Account last4 on the anchor (for "different account" filter).
+     * @param limit Max rows returned, newest first by [TransactionEntity.dateTime].
+     */
+    suspend fun findInternalTransferPairCandidates(
+        excludeId: Long,
+        amount: BigDecimal,
+        currency: String,
+        oppositeType: TransactionType,
+        windowStart: LocalDateTime,
+        windowEnd: LocalDateTime,
+        sourceBankName: String?,
+        sourceAccountNumber: String?,
+        limit: Int = 20
+    ): List<TransactionEntity> =
+        transactionDao.findInternalTransferPairCandidates(
+            excludeId = excludeId,
+            amount = amount,
+            currency = currency,
+            oppositeType = oppositeType,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            sourceBankName = sourceBankName,
+            sourceAccountNumber = sourceAccountNumber,
+            limit = limit
+        )
+
+    /**
+     * Same as [findInternalTransferPairCandidates] but derives anchor fields from [anchor].
+     * [anchor.id] must be non-zero so it can be excluded from results.
+     */
+    suspend fun findInternalTransferPairCandidatesForAnchor(
+        anchor: TransactionEntity,
+        oppositeType: TransactionType,
+        windowStart: LocalDateTime,
+        windowEnd: LocalDateTime,
+        limit: Int = 20
+    ): List<TransactionEntity> =
+        findInternalTransferPairCandidates(
+            excludeId = anchor.id,
+            amount = anchor.amount,
+            currency = anchor.currency,
+            oppositeType = oppositeType,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            sourceBankName = anchor.bankName,
+            sourceAccountNumber = anchor.accountNumber,
+            limit = limit
+        )
+
+    /** Part 8 — returns number of rows updated. */
+    suspend fun backfillLegacyBankTransferCategoryRows(): Int =
+        transactionDao.backfillTransferTypeForTransferCategory(
+            TransferLikeSmsClassifier.HEURISTIC_TRANSFER_CATEGORY,
+            LocalDateTime.now(),
+        )
 }

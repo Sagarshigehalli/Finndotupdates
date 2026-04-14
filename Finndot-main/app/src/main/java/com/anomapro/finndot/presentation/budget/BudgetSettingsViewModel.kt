@@ -6,12 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.anomapro.finndot.data.database.entity.BudgetEntity
 import com.anomapro.finndot.data.database.entity.SubscriptionEntity
 import com.anomapro.finndot.data.database.entity.TransactionEntity
-import com.anomapro.finndot.data.database.entity.TransactionType
 import com.anomapro.finndot.data.repository.BudgetRepository
 import com.anomapro.finndot.data.repository.CategoryRepository
 import com.anomapro.finndot.data.preferences.UserPreferencesRepository
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -99,7 +99,7 @@ class BudgetSettingsViewModel @Inject constructor(
                             val transactions = try {
                                 transactionRepository.getTransactionsBetweenDates(startDate, endDate).first()
                                     .filter { it.currency == currency }
-                                    .filter { it.transactionType in listOf(TransactionType.EXPENSE, TransactionType.CREDIT) }
+                                    .filter { SpendingAnalyticsFilter.countsAsTrueSpending(it) }
                             } catch (e: Exception) {
                                 emptyList()
                             }

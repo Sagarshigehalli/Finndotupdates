@@ -4,6 +4,7 @@ import androidx.room.*
 import com.anomapro.finndot.data.database.entity.TransactionEntity
 import com.anomapro.finndot.data.database.entity.TransactionType
 import kotlinx.coroutines.flow.Flow
+import java.math.BigDecimal
 import java.time.LocalDateTime
 
 @Dao
@@ -172,4 +173,56 @@ interface TransactionDao {
         ORDER BY date_time DESC
     """)
     suspend fun getTransactionsWithSms(): List<TransactionEntity>
+
+    /**
+     * Candidates for the opposite leg of an internal (own-account) transfer.
+     *
+     * Matches non-deleted rows with the same [amount] and [currency], [oppositeType],
+     * [date_time] in [[windowStart], [windowEnd]], excluding [excludeId].
+     * Requires a different bank/account identity than the source (at least one of
+     * bank name or account last4 differs) so both SMS legs are not the same account.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE is_deleted = 0
+        AND id != :excludeId
+        AND amount = :amount
+        AND currency = :currency
+        AND transaction_type = :oppositeType
+        AND date_time >= :windowStart
+        AND date_time <= :windowEnd
+        AND (
+            IFNULL(bank_name, '') != IFNULL(:sourceBankName, '')
+            OR IFNULL(account_number, '') != IFNULL(:sourceAccountNumber, '')
+        )
+        ORDER BY date_time DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun findInternalTransferPairCandidates(
+        excludeId: Long,
+        amount: BigDecimal,
+        currency: String,
+        oppositeType: TransactionType,
+        windowStart: LocalDateTime,
+        windowEnd: LocalDateTime,
+        sourceBankName: String?,
+        sourceAccountNumber: String?,
+        limit: Int
+    ): List<TransactionEntity>
+
+    /**
+     * Part 8 — one-time fix: rows already labeled as bank transfer but still stored as
+     * [TransactionType.EXPENSE] / [TransactionType.INCOME] are upgraded to [TransactionType.TRANSFER].
+     */
+    @Query(
+        """
+        UPDATE transactions SET transaction_type = 'TRANSFER', updated_at = :now
+        WHERE is_deleted = 0
+        AND transaction_type IN ('EXPENSE', 'INCOME')
+        AND LOWER(TRIM(category)) = LOWER(:category)
+        """
+    )
+    suspend fun backfillTransferTypeForTransferCategory(category: String, now: LocalDateTime): Int
 }

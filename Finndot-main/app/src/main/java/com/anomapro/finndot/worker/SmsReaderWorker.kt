@@ -20,11 +20,15 @@ import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.CardRepository
 import com.anomapro.finndot.data.repository.LlmRepository
 import com.anomapro.finndot.data.repository.MerchantMappingRepository
+import com.anomapro.finndot.data.repository.MerchantNameMappingRepository
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
 import com.anomapro.finndot.data.repository.UnrecognizedSmsRepository
 import com.anomapro.finndot.domain.repository.RuleRepository
+import com.anomapro.finndot.domain.service.CounterpartyMemoryApplier
+import com.anomapro.finndot.domain.service.InternalTransferPairingService
 import com.anomapro.finndot.domain.service.RuleEngine
+import com.anomapro.finndot.domain.service.TransferLikeSmsClassifier
 import com.anomapro.finndot.data.database.entity.AccountBalanceEntity
 import com.anomapro.finndot.data.database.entity.TransactionType
 import com.anomapro.finndot.data.database.entity.UnrecognizedSmsEntity
@@ -57,7 +61,11 @@ class SmsReaderWorker @AssistedInject constructor(
     private val userPreferencesRepository: UserPreferencesRepository,
     private val unrecognizedSmsRepository: UnrecognizedSmsRepository,
     private val ruleRepository: RuleRepository,
-    private val ruleEngine: RuleEngine
+    private val ruleEngine: RuleEngine,
+    private val internalTransferPairingService: InternalTransferPairingService,
+    private val transferLikeSmsClassifier: TransferLikeSmsClassifier,
+    private val merchantNameMappingRepository: MerchantNameMappingRepository,
+    private val counterpartyMemoryApplier: CounterpartyMemoryApplier,
 ) : CoroutineWorker(appContext, workerParams) {
     
     companion object {
@@ -283,20 +291,30 @@ class SmsReaderWorker @AssistedInject constructor(
                             continue
                         }
 
-                        // Check for custom merchant mapping
-                        val customCategory = merchantMappingRepository.getCategoryForMerchant(entity.merchantName)
-                        val entityWithMapping = if (customCategory != null) {
-                            Log.d(TAG, "Found custom category mapping: ${entity.merchantName} -> $customCategory")
-                            entity.copy(category = customCategory)
+                        val normalizedMerchantName = merchantNameMappingRepository.getNormalizedName(entity.merchantName)
+                        val entityWithNormalizedName = if (normalizedMerchantName != entity.merchantName) {
+                            Log.d(TAG, "Applied merchant name normalization: ${entity.merchantName} -> $normalizedMerchantName")
+                            entity.copy(normalizedMerchantName = normalizedMerchantName)
                         } else {
                             entity
                         }
 
+                        // Check for custom merchant mapping
+                        val customCategory = merchantMappingRepository.getCategoryForMerchant(normalizedMerchantName)
+                        val entityWithMapping = if (customCategory != null) {
+                            Log.d(TAG, "Found custom category mapping: $normalizedMerchantName -> $customCategory")
+                            entityWithNormalizedName.copy(category = customCategory)
+                        } else {
+                            entityWithNormalizedName
+                        }
+
+                        val entityWithMemory = counterpartyMemoryApplier.applyAfterMerchantMapping(entityWithMapping)
+
                         // Apply rule engine to the transaction
                         // Optimize by getting rules specific to this transaction type
-                        val activeRules = ruleRepository.getActiveRulesByType(entityWithMapping.transactionType)
+                        val activeRules = ruleRepository.getActiveRulesByType(entityWithMemory.transactionType)
                         val (entityWithRules, ruleApplications) = ruleEngine.evaluateRules(
-                            entityWithMapping,
+                            entityWithMemory,
                             sms.body,
                             activeRules
                         )
@@ -327,16 +345,17 @@ class SmsReaderWorker @AssistedInject constructor(
                             } else {
                                 entityWithRules
                             }
-                            
-                            val rowId = transactionRepository.insertTransaction(finalEntity)
+
+                            val toSave = transferLikeSmsClassifier.applyAfterRules(finalEntity, sms.body)
+                            val rowId = transactionRepository.insertTransaction(toSave)
                             if (rowId != -1L) {
                                 savedCount++
-                                Log.d(TAG, "Saved new transaction with ID: $rowId${if (finalEntity.isRecurring) " (Recurring)" else ""}")
+                                Log.d(TAG, "Saved new transaction with ID: $rowId${if (toSave.isRecurring) " (Recurring)" else ""}")
 
                                 // Save rule applications if any rules were applied
                                 if (ruleApplications.isNotEmpty()) {
                                     ruleRepository.saveRuleApplications(ruleApplications)
-                                    Log.d(TAG, "Saved ${ruleApplications.size} rule applications for transaction: ${finalEntity.id}")
+                                    Log.d(TAG, "Saved ${ruleApplications.size} rule applications for transaction: ${toSave.id}")
                                 }
                                 
                                 // Only save balance/credit limit information for NEW transactions (not duplicates)
@@ -498,7 +517,7 @@ class SmsReaderWorker @AssistedInject constructor(
                                             bankName = parsedTransaction.bankName,
                                             accountLast4 = targetAccountLast4,
                                             balance = newBalance,
-                                            timestamp = finalEntity.dateTime,
+                                            timestamp = toSave.dateTime,
                                             transactionId = if (rowId != -1L) rowId else null,
                                             creditLimit = existingAccount?.creditLimit, // Keep existing credit limit
                                             isCreditCard = isCreditCard || (existingAccount?.isCreditCard ?: false),
@@ -522,6 +541,7 @@ class SmsReaderWorker @AssistedInject constructor(
                                     Log.d(TAG, "No balance entry created for unlinked debit card: ${parsedTransaction.bankName} **${parsedTransaction.accountLast4}")
                                 }
                             }
+                            internalTransferPairingService.tryPairAfterInsert(toSave.copy(id = rowId))
                             } else {
                                 Log.d(TAG, "Transaction already exists (duplicate), skipping both transaction and balance update: ${entity.transactionHash}")
                             }

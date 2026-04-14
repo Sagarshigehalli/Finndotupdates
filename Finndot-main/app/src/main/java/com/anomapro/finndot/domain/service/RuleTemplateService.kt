@@ -1,5 +1,6 @@
 package com.anomapro.finndot.domain.service
 
+import com.anomapro.finndot.data.database.entity.TransactionType
 import com.anomapro.finndot.domain.model.rule.*
 import java.util.UUID
 import javax.inject.Inject
@@ -10,8 +11,172 @@ class RuleTemplateService @Inject constructor() {
 
     fun getDefaultRuleTemplates(): List<TransactionRule> {
         return listOf(
-            // Just one simple example rule to get users started
-            createSmallPaymentsToFoodRule()
+            createSmallPaymentsToFoodRule(),
+            // SMS_TEXT templates: major Indian banks — inactive until the user enables them.
+            createSbiSmsRailTransferTemplate(),
+            createHdfcSmsRailTransferTemplate(),
+            createIciciSmsRailTransferTemplate(),
+            createAxisSmsRailTransferTemplate(),
+            createKotakSmsRailTransferTemplate(),
+            createPnbSmsRailTransferTemplate(),
+            createBankOfBarodaSmsRailTransferTemplate(),
+            createGenericIndianSmsRailTransferTemplate(),
+        )
+    }
+
+    /**
+     * [RuleEngine] uses [String.matches], so patterns must match the **entire** SMS body.
+     * [smsMerchantExclusionPrefix] drops obvious POS / e‑commerce phrasing (aligned with
+     * [CompiledPatterns.TransferHeuristic.MERCHANT_OR_POS_BLOCK]).
+     */
+    private fun smsMerchantExclusionPrefix(): String =
+        """(?is)(?!.*(?:Amazon|AMZN|Flipkart|FKRT|Swiggy|Zomato|Point\s+of\s+Sale|\bPOS\b|""" +
+            """Card\s+purchase|Debit\s+purchase|Online\s+payment|Tap\s*(?:&|and)?\s*Pay))"""
+
+    private fun smsTransferRailsSubpattern(): String =
+        """(?:\bNEFT\b|\bIMPS\b|\bRTGS\b|Fund\s+Transfer|Beneficiary|\bIFSC\b|\bUTR\b|""" +
+            """INB[-/\s]*(?:FT|NEFT|IMPS|RTGS)|INF[-/\s]*(?:FT|NEFT|IMPS|RTGS))"""
+
+    private fun smsBankRailTransferRule(
+        name: String,
+        description: String,
+        priority: Int,
+        bankSubpattern: String,
+    ): TransactionRule {
+        val regex =
+            smsMerchantExclusionPrefix() +
+                """.*(?=.*""" + bankSubpattern + """)(?=.*""" + smsTransferRailsSubpattern() + """).*"""
+        return TransactionRule(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            description = description,
+            priority = priority,
+            conditions = listOf(
+                RuleCondition(
+                    field = TransactionField.TYPE,
+                    operator = ConditionOperator.IN,
+                    value = "EXPENSE,INCOME",
+                    logicalOperator = LogicalOperator.AND,
+                ),
+                RuleCondition(
+                    field = TransactionField.SMS_TEXT,
+                    operator = ConditionOperator.REGEX_MATCHES,
+                    value = regex,
+                    logicalOperator = LogicalOperator.AND,
+                ),
+            ),
+            actions = listOf(
+                RuleAction(
+                    field = TransactionField.TYPE,
+                    actionType = ActionType.SET,
+                    value = TransactionType.TRANSFER.name,
+                ),
+                RuleAction(
+                    field = TransactionField.CATEGORY,
+                    actionType = ActionType.SET,
+                    value = TransferLikeSmsClassifier.HEURISTIC_TRANSFER_CATEGORY,
+                ),
+            ),
+            isActive = false,
+            isSystemTemplate = true,
+        )
+    }
+
+    private fun createSbiSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: SBI — NEFT/IMPS/RTGS (SMS)",
+            description = "State Bank of India SMS mentioning NEFT/IMPS/RTGS, IFSC, UTR, or fund transfer",
+            priority = 22,
+            bankSubpattern = """(?:\bSBI\b|SBIN|STATE\s+BANK\s+(?:OF\s+)?INDIA|YONO\s+SBI)""",
+        )
+
+    private fun createHdfcSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: HDFC — NEFT/IMPS/RTGS (SMS)",
+            description = "HDFC Bank SMS with rail keywords (NEFT/IMPS/RTGS, IFSC, INB-FT, etc.)",
+            priority = 24,
+            bankSubpattern = """(?:HDFC|HDFCBK|HDFC\s+Bank)""",
+        )
+
+    private fun createIciciSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: ICICI — NEFT/IMPS/RTGS (SMS)",
+            description = "ICICI Bank SMS with rail keywords",
+            priority = 26,
+            bankSubpattern = """(?:ICICI|ICICIB|ICICI\s+Bank)""",
+        )
+
+    private fun createAxisSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: Axis — NEFT/IMPS/RTGS (SMS)",
+            description = "Axis Bank SMS with rail keywords",
+            priority = 28,
+            bankSubpattern = """(?:\bAXIS\b|UTIB|Axis\s+Bank)""",
+        )
+
+    private fun createKotakSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: Kotak — NEFT/IMPS/RTGS (SMS)",
+            description = "Kotak Mahindra Bank SMS with rail keywords",
+            priority = 30,
+            bankSubpattern = """(?:KOTAK|KKBK|Kotak\s+Mahindra)""",
+        )
+
+    private fun createPnbSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: PNB — NEFT/IMPS/RTGS (SMS)",
+            description = "Punjab National Bank SMS with rail keywords",
+            priority = 32,
+            bankSubpattern = """(?:\bPNB\b|PUNB|Punjab\s+National)""",
+        )
+
+    private fun createBankOfBarodaSmsRailTransferTemplate(): TransactionRule =
+        smsBankRailTransferRule(
+            name = "Template: Bank of Baroda — NEFT/IMPS/RTGS (SMS)",
+            description = "Bank of Baroda SMS with rail keywords",
+            priority = 34,
+            bankSubpattern = """(?:\bBOB\b|BARB|Bank\s+of\s+Baroda)""",
+        )
+
+    private fun createGenericIndianSmsRailTransferTemplate(): TransactionRule {
+        val rails = smsTransferRailsSubpattern()
+        val extraAnchor = """(?:IFSC|UTR|Beneficiary)"""
+        val regex =
+            smsMerchantExclusionPrefix() +
+                """.*(?=.*""" + rails + """)(?=.*""" + extraAnchor + """).*"""
+        return TransactionRule(
+            id = UUID.randomUUID().toString(),
+            name = "Template: Any bank — NEFT/IMPS/RTGS + IFSC/UTR (SMS)",
+            description = "Non‑merchant SMS mentioning NEFT/IMPS/RTGS (or equivalent) and IFSC, UTR, or beneficiary",
+            priority = 50,
+            conditions = listOf(
+                RuleCondition(
+                    field = TransactionField.TYPE,
+                    operator = ConditionOperator.IN,
+                    value = "EXPENSE,INCOME",
+                    logicalOperator = LogicalOperator.AND,
+                ),
+                RuleCondition(
+                    field = TransactionField.SMS_TEXT,
+                    operator = ConditionOperator.REGEX_MATCHES,
+                    value = regex,
+                    logicalOperator = LogicalOperator.AND,
+                ),
+            ),
+            actions = listOf(
+                RuleAction(
+                    field = TransactionField.TYPE,
+                    actionType = ActionType.SET,
+                    value = TransactionType.TRANSFER.name,
+                ),
+                RuleAction(
+                    field = TransactionField.CATEGORY,
+                    actionType = ActionType.SET,
+                    value = TransferLikeSmsClassifier.HEURISTIC_TRANSFER_CATEGORY,
+                ),
+            ),
+            isActive = false,
+            isSystemTemplate = true,
         )
     }
 
@@ -250,12 +415,12 @@ class RuleTemplateService @Inject constructor() {
                 RuleAction(
                     field = TransactionField.TYPE,
                     actionType = ActionType.SET,
-                    value = "transfer"
+                    value = TransactionType.TRANSFER.name
                 ),
                 RuleAction(
                     field = TransactionField.CATEGORY,
                     actionType = ActionType.SET,
-                    value = "Transfer"
+                    value = TransferLikeSmsClassifier.HEURISTIC_TRANSFER_CATEGORY
                 )
             ),
             isActive = false

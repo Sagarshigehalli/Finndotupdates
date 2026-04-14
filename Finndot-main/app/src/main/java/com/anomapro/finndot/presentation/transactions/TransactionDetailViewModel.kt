@@ -6,10 +6,12 @@ import com.anomapro.finndot.data.currency.CurrencyConversionService
 import com.anomapro.finndot.data.database.entity.CategoryEntity
 import com.anomapro.finndot.data.database.entity.TransactionEntity
 import com.anomapro.finndot.data.database.entity.TransactionType
+import com.anomapro.finndot.data.preferences.CounterpartyMemoryRepository
 import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.CategoryRepository
 import com.anomapro.finndot.data.repository.MerchantMappingRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
+import com.anomapro.finndot.domain.model.CounterpartyMemoryKey
 import com.anomapro.finndot.core.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,6 +30,7 @@ class TransactionDetailViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountBalanceRepository: AccountBalanceRepository,
     private val currencyConversionService: CurrencyConversionService,
+    private val counterpartyMemoryRepository: CounterpartyMemoryRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
     
@@ -60,6 +63,13 @@ class TransactionDetailViewModel @Inject constructor(
     
     private val _updateExistingTransactions = MutableStateFlow(false)
     val updateExistingTransactions: StateFlow<Boolean> = _updateExistingTransactions.asStateFlow()
+
+    private val _rememberForSimilarSms = MutableStateFlow(false)
+    val rememberForSimilarSms: StateFlow<Boolean> = _rememberForSimilarSms.asStateFlow()
+
+    /** True after save when user checked "remember for similar SMS". Consumed by UI for snackbar copy. */
+    private val _savedCounterpartyMemory = MutableStateFlow(false)
+    val savedCounterpartyMemory: StateFlow<Boolean> = _savedCounterpartyMemory.asStateFlow()
     
     private val _existingTransactionCount = MutableStateFlow(0)
     
@@ -158,6 +168,7 @@ class TransactionDetailViewModel @Inject constructor(
         _editableTransaction.value = _transaction.value?.copy()
         _isEditMode.value = true
         _errorMessage.value = null
+        _rememberForSimilarSms.value = false
         
         // Load count of other transactions from same merchant
         _transaction.value?.let { txn ->
@@ -177,8 +188,14 @@ class TransactionDetailViewModel @Inject constructor(
         _errorMessage.value = null
         _applyToAllFromMerchant.value = false
         _updateExistingTransactions.value = false
+        _rememberForSimilarSms.value = false
         _existingTransactionCount.value = 0
     }
+
+    fun setRememberForSimilarSms(value: Boolean) {
+        _rememberForSimilarSms.value = value
+    }
+
     
     fun toggleApplyToAllFromMerchant() {
         _applyToAllFromMerchant.value = !_applyToAllFromMerchant.value
@@ -278,6 +295,18 @@ class TransactionDetailViewModel @Inject constructor(
                 )
                 
                 transactionRepository.updateTransaction(normalizedTransaction)
+
+                if (_rememberForSimilarSms.value) {
+                    val key = CounterpartyMemoryKey.fromEntity(normalizedTransaction)
+                    if (key != null) {
+                        counterpartyMemoryRepository.put(
+                            key,
+                            normalizedTransaction.transactionType,
+                            normalizedTransaction.category,
+                        )
+                        _savedCounterpartyMemory.value = true
+                    }
+                }
                 
                 // Save merchant mapping if checkbox is checked
                 if (_applyToAllFromMerchant.value) {
@@ -302,6 +331,7 @@ class TransactionDetailViewModel @Inject constructor(
                 _errorMessage.value = null
                 _applyToAllFromMerchant.value = false
                 _updateExistingTransactions.value = false
+                _rememberForSimilarSms.value = false
                 _existingTransactionCount.value = 0
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save changes: ${e.message}"
@@ -317,6 +347,7 @@ class TransactionDetailViewModel @Inject constructor(
     
     fun clearSaveSuccess() {
         _saveSuccess.value = false
+        _savedCounterpartyMemory.value = false
     }
     
     private fun validateMerchantName(name: String) {

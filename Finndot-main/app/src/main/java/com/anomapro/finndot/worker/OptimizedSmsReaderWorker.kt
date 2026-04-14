@@ -25,11 +25,15 @@ import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.CardRepository
 import com.anomapro.finndot.data.repository.LlmRepository
 import com.anomapro.finndot.data.repository.MerchantMappingRepository
+import com.anomapro.finndot.data.repository.MerchantNameMappingRepository
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
 import com.anomapro.finndot.data.repository.UnrecognizedSmsRepository
 import com.anomapro.finndot.domain.repository.RuleRepository
+import com.anomapro.finndot.domain.service.CounterpartyMemoryApplier
+import com.anomapro.finndot.domain.service.InternalTransferPairingService
 import com.anomapro.finndot.domain.service.RuleEngine
+import com.anomapro.finndot.domain.service.TransferLikeSmsClassifier
 import com.anomapro.finndot.utils.CurrencyFormatter
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -70,7 +74,11 @@ class OptimizedSmsReaderWorker @AssistedInject constructor(
     private val unrecognizedSmsRepository: UnrecognizedSmsRepository,
     private val ruleRepository: RuleRepository,
     private val ruleEngine: RuleEngine,
-    private val llmSmsParser: com.anomapro.finndot.domain.service.LlmSmsParser
+    private val llmSmsParser: com.anomapro.finndot.domain.service.LlmSmsParser,
+    private val internalTransferPairingService: InternalTransferPairingService,
+    private val transferLikeSmsClassifier: TransferLikeSmsClassifier,
+    private val merchantNameMappingRepository: MerchantNameMappingRepository,
+    private val counterpartyMemoryApplier: CounterpartyMemoryApplier,
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -1058,21 +1066,31 @@ private suspend fun saveParsedTransaction(
             return false
         }
 
-        // Check for custom merchant mapping
-        val customCategory = merchantMappingRepository.getCategoryForMerchant(entity.merchantName)
-        val entityWithMapping = if (customCategory != null) {
-            Log.d(TAG, "Found custom category mapping: ${entity.merchantName} -> $customCategory")
-            entity.copy(category = customCategory)
+        val normalizedMerchantName = merchantNameMappingRepository.getNormalizedName(entity.merchantName)
+        val entityWithNormalizedName = if (normalizedMerchantName != entity.merchantName) {
+            Log.d(TAG, "Applied merchant name normalization: ${entity.merchantName} -> $normalizedMerchantName")
+            entity.copy(normalizedMerchantName = normalizedMerchantName)
         } else {
             entity
         }
 
+        // Check for custom merchant mapping
+        val customCategory = merchantMappingRepository.getCategoryForMerchant(normalizedMerchantName)
+        val entityWithMapping = if (customCategory != null) {
+            Log.d(TAG, "Found custom category mapping: $normalizedMerchantName -> $customCategory")
+            entityWithNormalizedName.copy(category = customCategory)
+        } else {
+            entityWithNormalizedName
+        }
+
+        val entityWithMemory = counterpartyMemoryApplier.applyAfterMerchantMapping(entityWithMapping)
+
         // Apply rule engine to the transaction
-        val activeRules = ruleRepository.getActiveRulesByType(entityWithMapping.transactionType)
+        val activeRules = ruleRepository.getActiveRulesByType(entityWithMemory.transactionType)
 
         // Check if this transaction should be blocked
         val blockingRule = ruleEngine.shouldBlockTransaction(
-            entityWithMapping,
+            entityWithMemory,
             sms.body,
             activeRules
         )
@@ -1083,7 +1101,7 @@ private suspend fun saveParsedTransaction(
         }
 
         val (entityWithRules, ruleApplications) = ruleEngine.evaluateRules(
-            entityWithMapping,
+            entityWithMemory,
             sms.body,
             activeRules
         )
@@ -1115,11 +1133,12 @@ private suspend fun saveParsedTransaction(
             entityWithRules
         }
 
-        val rowId = transactionRepository.insertTransaction(finalEntity)
+        val toSave = transferLikeSmsClassifier.applyAfterRules(finalEntity, sms.body)
+        val rowId = transactionRepository.insertTransaction(toSave)
         if (rowId != -1L) {
             Log.d(
                 TAG,
-                "Saved new transaction with ID: $rowId${if (finalEntity.isRecurring) " (Recurring)" else ""}"
+                "Saved new transaction with ID: $rowId${if (toSave.isRecurring) " (Recurring)" else ""}"
             )
 
             // Save rule applications if any rules were applied
@@ -1127,12 +1146,13 @@ private suspend fun saveParsedTransaction(
                 ruleRepository.saveRuleApplications(ruleApplications)
                 Log.d(
                     TAG,
-                    "Saved ${ruleApplications.size} rule applications for transaction: ${finalEntity.id}"
+                    "Saved ${ruleApplications.size} rule applications for transaction: ${toSave.id}"
                 )
             }
 
             // Process balance updates
-            processBalanceUpdate(parsedTransaction, finalEntity, rowId)
+            processBalanceUpdate(parsedTransaction, toSave, rowId)
+            internalTransferPairingService.tryPairAfterInsert(toSave.copy(id = rowId))
             return true
         } else {
             Log.d(

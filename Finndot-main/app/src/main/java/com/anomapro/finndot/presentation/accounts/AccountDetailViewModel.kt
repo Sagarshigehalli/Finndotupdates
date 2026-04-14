@@ -9,6 +9,7 @@ import com.anomapro.finndot.data.database.entity.AccountBalanceEntity
 import com.anomapro.finndot.data.database.entity.TransactionEntity
 import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
+import com.anomapro.finndot.domain.analytics.SpendingAnalyticsFilter
 import com.anomapro.finndot.ui.components.BalancePoint
 import com.anomapro.finndot.utils.CurrencyFormatter
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -97,10 +98,14 @@ class AccountDetailViewModel @Inject constructor(
                         transaction.amount
                     }
 
-                    if (transaction.transactionType == com.anomapro.finndot.data.database.entity.TransactionType.INCOME) {
-                        totalIncome += convertedAmount
-                    } else {
-                        totalExpenses += convertedAmount
+                    when {
+                        SpendingAnalyticsFilter.countsAsTrueIncome(transaction) -> {
+                            totalIncome += convertedAmount
+                        }
+                        SpendingAnalyticsFilter.countsAsTrueSpending(transaction) -> {
+                            totalExpenses += convertedAmount
+                        }
+                        else -> Unit
                     }
                 }
 

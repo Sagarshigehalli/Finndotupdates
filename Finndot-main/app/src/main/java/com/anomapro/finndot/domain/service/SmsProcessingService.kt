@@ -6,6 +6,7 @@ import com.anomapro.finndot.data.mapper.toEntity
 import com.anomapro.finndot.data.repository.AccountBalanceRepository
 import com.anomapro.finndot.data.repository.CardRepository
 import com.anomapro.finndot.data.repository.MerchantMappingRepository
+import com.anomapro.finndot.data.repository.MerchantNameMappingRepository
 import com.anomapro.finndot.data.repository.SubscriptionRepository
 import com.anomapro.finndot.data.repository.TransactionRepository
 import com.anomapro.finndot.data.repository.UnrecognizedSmsRepository
@@ -38,7 +39,11 @@ class SmsProcessingService @Inject constructor(
     private val merchantMappingRepository: MerchantMappingRepository,
     private val unrecognizedSmsRepository: UnrecognizedSmsRepository,
     private val ruleRepository: RuleRepository,
-    private val ruleEngine: RuleEngine
+    private val ruleEngine: RuleEngine,
+    private val internalTransferPairingService: InternalTransferPairingService,
+    private val transferLikeSmsClassifier: TransferLikeSmsClassifier,
+    private val merchantNameMappingRepository: MerchantNameMappingRepository,
+    private val counterpartyMemoryApplier: CounterpartyMemoryApplier,
 ) {
     companion object {
         private const val TAG = "SmsProcessingService"
@@ -133,7 +138,19 @@ class SmsProcessingService @Inject constructor(
                 return false
             }
 
-            val finalEntity = entity
+            val normalizedMerchantName = merchantNameMappingRepository.getNormalizedName(entity.merchantName)
+            val entityWithNormalizedName = if (normalizedMerchantName != entity.merchantName) {
+                entity.copy(normalizedMerchantName = normalizedMerchantName)
+            } else {
+                entity
+            }
+            val customCategory = merchantMappingRepository.getCategoryForMerchant(normalizedMerchantName)
+            val entityWithMapping = if (customCategory != null) {
+                entityWithNormalizedName.copy(category = customCategory)
+            } else {
+                entityWithNormalizedName
+            }
+            val finalEntity = counterpartyMemoryApplier.applyAfterMerchantMapping(entityWithMapping)
 
             // Save transaction
             val rowId = transactionRepository.insertTransaction(finalEntity)
@@ -145,28 +162,34 @@ class SmsProcessingService @Inject constructor(
                 try {
                     val rules = ruleRepository.getActiveRules()
                     val (modifiedTransaction, ruleApplications) = ruleEngine.evaluateRules(savedEntity, body, rules)
-                    
+
                     if (ruleApplications.isNotEmpty()) {
                         ruleRepository.saveRuleApplications(ruleApplications)
                         Log.d(TAG, "Saved ${ruleApplications.size} rule applications for transaction: ${savedEntity.id}")
-                        
-                        // Update transaction if modified by rules
                         if (modifiedTransaction != savedEntity) {
                             transactionRepository.updateTransaction(modifiedTransaction)
                             Log.d(TAG, "Updated transaction with rule modifications")
                         }
-                        
-                        // Process balance updates with potentially modified transaction
-                        processBalanceUpdate(parsedTransaction, modifiedTransaction, rowId)
-                        return true
-                    } else {
-                        processBalanceUpdate(parsedTransaction, savedEntity, rowId)
-                        return true
                     }
+
+                    // After rules: SMS transfer heuristic (rules win for fields they already set)
+                    var txForDownstream = transferLikeSmsClassifier.applyAfterRules(modifiedTransaction, body)
+                    if (txForDownstream != modifiedTransaction) {
+                        transactionRepository.updateTransaction(txForDownstream)
+                        Log.d(TAG, "Applied transfer-like SMS heuristic for transaction id=$rowId")
+                    }
+
+                    processBalanceUpdate(parsedTransaction, txForDownstream, rowId)
+                    internalTransferPairingService.tryPairAfterInsert(txForDownstream)
+                    return true
                 } catch (e: Exception) {
                     Log.e(TAG, "Error applying rules: ${e.message}", e)
-                    // Fallback to processing balance update with original entity
-                    processBalanceUpdate(parsedTransaction, savedEntity, rowId)
+                    val txAfterHeuristic = transferLikeSmsClassifier.applyAfterRules(savedEntity, body)
+                    if (txAfterHeuristic != savedEntity) {
+                        transactionRepository.updateTransaction(txAfterHeuristic)
+                    }
+                    processBalanceUpdate(parsedTransaction, txAfterHeuristic, rowId)
+                    internalTransferPairingService.tryPairAfterInsert(txAfterHeuristic)
                     return true
                 }
             }
